@@ -86,9 +86,20 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 }
 .figure{
   position:relative;height:340px;display:flex;align-items:flex-end;justify-content:center;
+  perspective:900px;perspective-origin:50% 60%;touch-action:pan-y;cursor:grab;
+}
+.figure:active{cursor:grabbing}
+.figure .rig{
+  position:relative;height:100%;display:flex;align-items:flex-end;
+  transform-style:preserve-3d;will-change:transform;
 }
 .figure img{height:320px;width:auto;max-width:92%;object-fit:contain;
-  filter:drop-shadow(0 24px 30px rgba(0,0,0,.6))}
+  filter:drop-shadow(0 24px 30px rgba(0,0,0,.6));
+  animation:idle 6.5s ease-in-out infinite}
+@keyframes idle{
+  0%,100%{transform:translateY(0) scale(1)}
+  50%    {transform:translateY(-6px) scale(1.006)}
+}
 .figure .noimg{
   width:150px;height:290px;border:1px dashed var(--line-hi);border-radius:8px;
   display:flex;align-items:center;justify-content:center;color:var(--muted);
@@ -101,6 +112,22 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   background:radial-gradient(closest-side,rgba(201,162,39,.30),rgba(201,162,39,.05) 70%,transparent);
   box-shadow:0 0 26px 5px rgba(201,162,39,.10);
   border:1px solid rgba(201,162,39,.32);
+}
+/* the sweep is what actually reads as rotation */
+.disc:before{
+  content:'';position:absolute;inset:-1px;border-radius:50%;
+  background:conic-gradient(from 0deg,
+    transparent 0deg, rgba(227,195,86,.55) 24deg, transparent 60deg,
+    transparent 180deg, rgba(227,195,86,.28) 204deg, transparent 240deg);
+  animation:sweep 7s linear infinite;
+}
+@keyframes sweep{to{transform:rotate(360deg)}}
+.spinhint{
+  font-family:var(--mono);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--muted);opacity:.65;margin-top:6px
+}
+@media (prefers-reduced-motion:reduce){
+  .figure img,.disc:before{animation:none}
 }
 .nameplate{
   margin:14px 18px 0;border:1px solid var(--brass-dim);border-radius:4px;
@@ -926,7 +953,48 @@ function Roster({
     [k]: val
   } : x));
 
-  // Read a picked file, shrink it to a sane size, store it inside the app.
+  // Drag left/right to turn him a little. A flat image can only take so much
+  // rotation before it reads as a sheet of paper, so this is clamped.
+  const [yaw, setYaw] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({
+    x: 0,
+    start: 0
+  });
+  const MAX_YAW = 22;
+  useEffect(() => {
+    // drift back to centre, and sway when left alone
+    if (dragging) return;
+    let raf,
+      t0 = null;
+    const tick = t => {
+      if (t0 === null) t0 = t;
+      const el = (t - t0) / 1000;
+      setYaw(y => {
+        const home = Math.sin(el * 0.55) * 4; // slow idle sway
+        return y + (home - y) * 0.06;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [dragging]);
+  const onDown = e => {
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    dragRef.current = {
+      x,
+      start: yaw
+    };
+    setDragging(true);
+  };
+  const onMove = e => {
+    if (!dragging) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    const dx = x - dragRef.current.x;
+    const next = Math.max(-MAX_YAW, Math.min(MAX_YAW, dragRef.current.start + dx * 0.35));
+    setYaw(next);
+  };
+  const onUp = () => setDragging(false);
   const pickFile = e => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
@@ -970,15 +1038,30 @@ function Roster({
   }, r.name || '—'))), /*#__PURE__*/React.createElement("div", {
     className: "stage"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "figure"
+    className: "figure",
+    onMouseDown: onDown,
+    onMouseMove: onMove,
+    onMouseUp: onUp,
+    onMouseLeave: onUp,
+    onTouchStart: onDown,
+    onTouchMove: onMove,
+    onTouchEnd: onUp
   }, /*#__PURE__*/React.createElement("div", {
     className: "disc"
-  }), p.img ? /*#__PURE__*/React.createElement("img", {
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "rig",
+    style: {
+      transform: `rotateY(${yaw.toFixed(2)}deg)`
+    }
+  }, p.img ? /*#__PURE__*/React.createElement("img", {
     src: p.img,
-    alt: p.name
+    alt: p.name,
+    draggable: "false"
   }) : /*#__PURE__*/React.createElement("div", {
     className: "noimg"
-  }, "No portrait yet", /*#__PURE__*/React.createElement("br", null), "\u2014 add one below")), /*#__PURE__*/React.createElement("div", {
+  }, "No portrait yet", /*#__PURE__*/React.createElement("br", null), "\u2014 add one below"))), p.img && /*#__PURE__*/React.createElement("div", {
+    className: "spinhint"
+  }, "Drag to turn"), /*#__PURE__*/React.createElement("div", {
     className: "nameplate"
   }, /*#__PURE__*/React.createElement("div", {
     className: "n"
