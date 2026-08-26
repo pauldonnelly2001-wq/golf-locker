@@ -93,9 +93,9 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   position:relative;height:100%;display:flex;align-items:flex-end;
   transform-style:preserve-3d;will-change:transform;
 }
-.figure img{height:320px;width:auto;max-width:92%;object-fit:contain;
-  filter:drop-shadow(0 24px 30px rgba(0,0,0,.6));
-  animation:idle 6.5s ease-in-out infinite}
+.figure img,.figure video,.fig-media{height:320px;width:auto;max-width:92%;object-fit:contain;
+  filter:drop-shadow(0 24px 30px rgba(0,0,0,.6))}
+.fig-media.still{animation:idle 6.5s ease-in-out infinite}
 @keyframes idle{
   0%,100%{transform:translateY(0) scale(1)}
   50%    {transform:translateY(-6px) scale(1.006)}
@@ -126,6 +126,19 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   font-family:var(--mono);font-size:9px;letter-spacing:.18em;text-transform:uppercase;
   color:var(--muted);opacity:.65;margin-top:6px
 }
+.wardrobe{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:12px 18px 0}
+.fit{
+  display:flex;flex-direction:column;align-items:center;gap:5px;
+  padding:7px 9px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+  min-width:62px
+}
+.fit.on{border-color:var(--brass);background:rgba(201,162,39,.08)}
+.fit img,.fit video{height:44px;width:30px;object-fit:contain}
+.fit span{
+  font-family:var(--mono);font-size:8px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--muted);max-width:66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.fit.on span{color:var(--brass)}
 @media (prefers-reduced-motion:reduce){
   .figure img,.disc:before{animation:none}
 }
@@ -911,7 +924,9 @@ const DEFAULT_ROSTER = [{
   name: 'Paul',
   you: true,
   img: '',
-  wins: 0
+  wins: 0,
+  lookIdx: 0,
+  looks: []
 }, {
   id: 'p2',
   name: 'Player 2',
@@ -936,6 +951,25 @@ const DEFAULT_ROSTER = [{
    SCREENS
    ============================================================ */
 
+/* A look is either a still or a clip. Data URIs carry their own type;
+   repo-hosted files are recognised by extension. */
+function isVideo(src) {
+  if (!src) return false;
+  if (src.startsWith('data:')) return src.startsWith('data:video');
+  return /\.(mp4|webm|mov|m4v)(\?.*)?$/i.test(src);
+}
+
+/* A player may hold several outfits. Older saves have a single img —
+   treat that as their first look so nothing is lost. */
+function looksOf(p) {
+  if (p.looks) return p.looks; // an explicit list wins, even an empty one
+  if (p.img) return [{
+    id: 'l0',
+    label: 'Default',
+    img: p.img
+  }];
+  return [];
+}
 function Roster({
   roster,
   setRoster,
@@ -952,6 +986,9 @@ function Roster({
     ...x,
     [k]: val
   } : x));
+  const looks = looksOf(p);
+  const lookIdx = Math.min(p.lookIdx || 0, Math.max(0, looks.length - 1));
+  const current = looks[lookIdx];
 
   // Drag left/right to turn him a little. A flat image can only take so much
   // rotation before it reads as a sheet of paper, so this is clamped.
@@ -995,34 +1032,90 @@ function Roster({
     setYaw(next);
   };
   const onUp = () => setDragging(false);
+
+  // Add one or more picked images to this player's wardrobe.
   const pickFile = e => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    setBusy('Reading…');
-    const fr = new FileReader();
-    fr.onload = () => {
-      const im = new Image();
-      im.onload = () => {
-        const maxH = 640,
-          scale = Math.min(1, maxH / im.height);
-        const c = document.createElement('canvas');
-        c.width = Math.round(im.width * scale);
-        c.height = Math.round(im.height * scale);
-        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
-        try {
-          const data = c.toDataURL('image/png');
-          upd('img', data);
-          setBusy(`Saved — ${Math.round(data.length / 1024)} kB`);
-        } catch (err) {
-          setBusy('Could not process that image.');
-        }
+    const all = Array.from(e.target.files || []);
+    if (!all.length) return;
+    e.target.value = '';
+    const vids = all.filter(f => f.type.startsWith('video'));
+    const files = all.filter(f => !f.type.startsWith('video'));
+    if (vids.length && !files.length) {
+      setBusy('Clips are too large to store in the app — put the file in the repo and add it by name below.');
+      return;
+    }
+    setBusy(`Reading ${files.length} image${files.length === 1 ? '' : 's'}…`);
+    const shrink = file => new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const im = new Image();
+        im.onload = () => {
+          const maxH = 560,
+            scale = Math.min(1, maxH / im.height);
+          const c = document.createElement('canvas');
+          c.width = Math.round(im.width * scale);
+          c.height = Math.round(im.height * scale);
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          // WebP keeps transparency at a fraction of PNG's size. Fall back if unsupported.
+          let data = c.toDataURL('image/webp', 0.9);
+          if (!data.startsWith('data:image/webp')) data = c.toDataURL('image/png');
+          resolve(data);
+        };
+        im.onerror = () => reject(new Error('not an image'));
+        im.src = fr.result;
       };
-      im.onerror = () => setBusy('That file was not a readable image.');
-      im.src = fr.result;
-    };
-    fr.onerror = () => setBusy('Could not read the file.');
-    fr.readAsDataURL(f);
+      fr.onerror = () => reject(new Error('unreadable'));
+      fr.readAsDataURL(file);
+    });
+    (async () => {
+      const added = [];
+      let failed = 0;
+      for (const f of files) {
+        try {
+          added.push(await shrink(f));
+        } catch (err) {
+          failed++;
+        }
+      }
+      if (!added.length) {
+        setBusy('None of those could be read.');
+        return;
+      }
+      const next = [...looks, ...added.map((img, k) => ({
+        id: 'l' + Date.now() + '_' + k,
+        label: `Outfit ${looks.length + k + 1}`,
+        img
+      }))];
+      setRoster(r => r.map((x, i) => i === sel ? {
+        ...x,
+        looks: next,
+        lookIdx: looks.length,
+        img: ''
+      } : x));
+      const kb = Math.round(added.reduce((t, d) => t + d.length, 0) / 1024);
+      const notes = [];
+      if (failed) notes.push(`${failed} skipped`);
+      if (vids.length) notes.push(`${vids.length} clip${vids.length === 1 ? '' : 's'} skipped — add by name below`);
+      setBusy(`Added ${added.length} outfit${added.length === 1 ? '' : 's'} — ${kb} kB${notes.length ? ', ' + notes.join(', ') : ''}`);
+    })();
   };
+  const renameLook = (i, label) => setRoster(r => r.map((x, j) => j === sel ? {
+    ...x,
+    looks: looksOf(x).map((l, k) => k === i ? {
+      ...l,
+      label
+    } : l)
+  } : x));
+  const removeLook = i => setRoster(r => r.map((x, j) => {
+    if (j !== sel) return x;
+    const next = looksOf(x).filter((_, k) => k !== i);
+    return {
+      ...x,
+      looks: next,
+      lookIdx: 0,
+      img: ''
+    };
+  }));
   const mine = trophies.filter(t => t.who === p.id);
   const [tn, setTn] = useState('');
   const [tv, setTv] = useState('');
@@ -1053,15 +1146,38 @@ function Roster({
     style: {
       transform: `rotateY(${yaw.toFixed(2)}deg)`
     }
-  }, p.img ? /*#__PURE__*/React.createElement("img", {
-    src: p.img,
+  }, current ? isVideo(current.img) ? /*#__PURE__*/React.createElement("video", {
+    src: current.img,
+    autoPlay: true,
+    loop: true,
+    muted: true,
+    playsInline: true,
+    className: "fig-media",
+    key: current.id
+  }) : /*#__PURE__*/React.createElement("img", {
+    src: current.img,
     alt: p.name,
-    draggable: "false"
+    draggable: "false",
+    className: "fig-media still"
   }) : /*#__PURE__*/React.createElement("div", {
     className: "noimg"
-  }, "No portrait yet", /*#__PURE__*/React.createElement("br", null), "\u2014 add one below"))), p.img && /*#__PURE__*/React.createElement("div", {
+  }, "No portrait yet", /*#__PURE__*/React.createElement("br", null), "\u2014 add one below"))), current && /*#__PURE__*/React.createElement("div", {
     className: "spinhint"
-  }, "Drag to turn"), /*#__PURE__*/React.createElement("div", {
+  }, isVideo(current.img) ? 'Playing' : 'Drag to turn'), looks.length > 1 && /*#__PURE__*/React.createElement("div", {
+    className: "wardrobe"
+  }, looks.map((l, i) => /*#__PURE__*/React.createElement("button", {
+    key: l.id,
+    className: 'fit' + (i === lookIdx ? ' on' : ''),
+    onClick: () => upd('lookIdx', i)
+  }, isVideo(l.img) ? /*#__PURE__*/React.createElement("video", {
+    src: l.img,
+    muted: true,
+    playsInline: true,
+    preload: "metadata"
+  }) : /*#__PURE__*/React.createElement("img", {
+    src: l.img,
+    alt: l.label
+  }), /*#__PURE__*/React.createElement("span", null, l.label, isVideo(l.img) ? ' ▸' : '')))), /*#__PURE__*/React.createElement("div", {
     className: "nameplate"
   }, /*#__PURE__*/React.createElement("div", {
     className: "n"
@@ -1107,10 +1223,11 @@ function Roster({
     onChange: e => upd('name', e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
     className: "field"
-  }, /*#__PURE__*/React.createElement("label", null, "Portrait"), /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement("label", null, "Wardrobe"), /*#__PURE__*/React.createElement("input", {
     ref: fileRef,
     type: "file",
     accept: "image/*",
+    multiple: true,
     onChange: pickFile,
     style: {
       display: 'none'
@@ -1118,26 +1235,75 @@ function Roster({
   }), /*#__PURE__*/React.createElement("button", {
     className: "btn ghost",
     onClick: () => fileRef.current && fileRef.current.click()
-  }, "Choose image from device"), busy && /*#__PURE__*/React.createElement("div", {
+  }, "Add outfits"), busy && /*#__PURE__*/React.createElement("div", {
     className: "note"
-  }, busy), p.img && /*#__PURE__*/React.createElement("button", {
-    className: "btn ghost sm",
+  }, busy), looks.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "list",
     style: {
-      marginTop: 8
-    },
-    onClick: () => {
-      upd('img', '');
-      setBusy('');
+      marginTop: 10
     }
-  }, "Remove portrait"), /*#__PURE__*/React.createElement("div", {
+  }, looks.map((l, i) => /*#__PURE__*/React.createElement("div", {
+    className: "li",
+    key: l.id
+  }, isVideo(l.img) ? /*#__PURE__*/React.createElement("video", {
+    src: l.img,
+    muted: true,
+    playsInline: true,
+    preload: "metadata",
+    style: {
+      height: 38,
+      width: 26,
+      objectFit: 'contain',
+      flex: '0 0 auto',
+      borderRadius: 3,
+      background: 'rgba(255,255,255,.03)'
+    }
+  }) : /*#__PURE__*/React.createElement("img", {
+    src: l.img,
+    alt: "",
+    style: {
+      height: 38,
+      width: 26,
+      objectFit: 'contain',
+      flex: '0 0 auto',
+      borderRadius: 3,
+      background: 'rgba(255,255,255,.03)'
+    }
+  }), /*#__PURE__*/React.createElement("input", {
+    value: l.label,
+    onChange: e => renameLook(i, e.target.value),
+    style: {
+      padding: '6px 8px'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "danger",
+    onClick: () => removeLook(i)
+  }, "\xD7")))), /*#__PURE__*/React.createElement("div", {
     className: "note"
-  }, "Stored inside the app, shrunk to fit. Works with no signal.")), /*#__PURE__*/React.createElement("div", {
+  }, "Each outfit is stored inside the app and works offline. Tap between them on the stage above.")), /*#__PURE__*/React.createElement("div", {
     className: "field"
-  }, /*#__PURE__*/React.createElement("label", null, "Or paste an image URL"), /*#__PURE__*/React.createElement("input", {
-    value: (p.img || '').startsWith('data:') ? '' : p.img || '',
-    onChange: e => upd('img', e.target.value),
-    placeholder: "https://\u2026"
-  })), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("label", null, "Or add by filename / URL"), /*#__PURE__*/React.createElement("input", {
+    placeholder: "my-move.mp4",
+    onKeyDown: e => {
+      if (e.key !== 'Enter' || !e.target.value.trim()) return;
+      const v = e.target.value.trim();
+      const next = [...looks, {
+        id: 'l' + Date.now(),
+        label: isVideo(v) ? `Move ${looks.filter(l => isVideo(l.img)).length + 1}` : `Outfit ${looks.length + 1}`,
+        img: v
+      }];
+      setRoster(r => r.map((x, i) => i === sel ? {
+        ...x,
+        looks: next,
+        lookIdx: next.length - 1,
+        img: ''
+      } : x));
+      e.target.value = '';
+      setBusy(isVideo(v) ? 'Move added' : 'Added from URL');
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "note"
+  }, "Press return to add. For a move, put the .mp4 in the repo next to index.html and type just its filename \u2014 clips are far too big to live inside the app.")), /*#__PURE__*/React.createElement("div", {
     className: "row"
   }, /*#__PURE__*/React.createElement("div", {
     className: "field"
