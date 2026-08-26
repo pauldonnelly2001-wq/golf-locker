@@ -85,8 +85,9 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
   position:relative;padding:12px 0 0;text-align:center;overflow:hidden;
 }
 .figure{
-  position:relative;height:340px;display:flex;align-items:flex-end;justify-content:center;
+  position:relative;height:400px;display:flex;align-items:flex-end;justify-content:center;
   perspective:900px;perspective-origin:50% 60%;touch-action:pan-y;cursor:grab;
+  overflow:hidden;
 }
 .figure:active{cursor:grabbing}
 .figure .rig{
@@ -96,6 +97,14 @@ label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
 .figure img,.figure video,.fig-media{height:320px;width:auto;max-width:92%;object-fit:contain;
   filter:drop-shadow(0 24px 30px rgba(0,0,0,.6))}
 .fig-media.still{animation:idle 6.5s ease-in-out infinite}
+/* A clip carries its own dark studio. Screen-blending drops that background
+   into the app's own, and the mask kills the rectangle's edges. */
+.fig-media.clip{
+  height:400px;max-width:none;object-fit:cover;
+  mix-blend-mode:screen;filter:none;
+  -webkit-mask-image:radial-gradient(ellipse 58% 62% at 50% 46%,#000 62%,rgba(0,0,0,.35) 84%,transparent 97%);
+  mask-image:radial-gradient(ellipse 58% 62% at 50% 46%,#000 62%,rgba(0,0,0,.35) 84%,transparent 97%);
+}
 @keyframes idle{
   0%,100%{transform:translateY(0) scale(1)}
   50%    {transform:translateY(-6px) scale(1.006)}
@@ -1139,7 +1148,7 @@ function Roster({
     onTouchStart: onDown,
     onTouchMove: onMove,
     onTouchEnd: onUp
-  }, /*#__PURE__*/React.createElement("div", {
+  }, !isVideo(current && current.img) && /*#__PURE__*/React.createElement("div", {
     className: "disc"
   }), /*#__PURE__*/React.createElement("div", {
     className: "rig",
@@ -1152,7 +1161,7 @@ function Roster({
     loop: true,
     muted: true,
     playsInline: true,
-    className: "fig-media",
+    className: "fig-media clip",
     key: current.id
   }) : /*#__PURE__*/React.createElement("img", {
     src: current.img,
